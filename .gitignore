@@ -1,0 +1,40 @@
+.venv/
+__pycache__/
+*.pyc
+logs/
+.env
+data/
+
+# 请求模板由 capture.bat 抓取，含本机 device_id / fp 等指纹，不要提交
+templates/
+
+# 探针导出的原始 SSE 与截图
+probe_*.txt
+probe_*.png
+probe_report.json
+verify_ui.png
+
+# ── Chrome profile 产物（务必忽略）────────────────────────
+# 历史教训：DOUBAO_USER_DATA_DIR 若被设成空字符串，Path('') 会变成 "."，
+# 于是 Chrome 把整个 profile 写进项目目录 —— 里面含 Cookies / Login Data /
+# History / Local Storage，推上去等于公开登录态。这里做兜底防护。
+Default/
+BrowserMetrics/
+Crashpad/
+GPUPersistentCache/
+GrShaderCache/
+ShaderCache/
+Safe Browsing/
+component_crx_cache/
+extensions_crx_cache/
+OptimizationGuideModelsManifest/
+segmentation_platform/
+Local State
+Last Browser
+Last Version
+Variations
+VariationsSafeSeedV2
+VariationsSeedV2
+first_party_sets.db*
+CrashpadMetrics-active.pma
+BrowserMetrics-spare.pma

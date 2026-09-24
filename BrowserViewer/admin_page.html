@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>豆包额度 · DouBao2.1API</title>
+<style>
+  :root{
+    --bg:#0f1115; --card:#171a21; --card2:#1e222b; --line:#272c36;
+    --fg:#e6e9ef; --dim:#8b93a3; --acc:#4c8dff; --ok:#35c07f; --warn:#f2b13c; --bad:#f2645c;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+       font:14px/1.55 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif}
+  .wrap{max-width:940px;margin:0 auto;padding:28px 20px 60px}
+  h1{font-size:19px;margin:0 0 4px}
+  .sub{color:var(--dim);font-size:12.5px;margin-bottom:22px}
+  .bar{display:flex;align-items:center;gap:12px;margin-bottom:18px;flex-wrap:wrap}
+  button{background:var(--card2);color:var(--fg);border:1px solid var(--line);
+         border-radius:8px;padding:7px 15px;font-size:13px;cursor:pointer}
+  button:hover{border-color:#3a4150}
+  button:disabled{opacity:.5;cursor:default}
+  .stamp{color:var(--dim);font-size:12px}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:680px){.grid{grid-template-columns:1fr}}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:17px 18px}
+  .card .lbl{color:var(--dim);font-size:12.5px;margin-bottom:9px;
+             display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+  .pct{font-size:31px;font-weight:600;letter-spacing:-.5px;line-height:1}
+  .pct small{font-size:15px;font-weight:400;color:var(--dim);margin-left:2px}
+  .track{height:9px;background:#0b0d11;border-radius:99px;overflow:hidden;margin:13px 0 11px}
+  .fill{height:100%;border-radius:99px;transition:width .5s ease}
+  .meta{color:var(--dim);font-size:12.5px}
+  .meta b{color:var(--fg);font-weight:500}
+  .wide{grid-column:1/-1}
+  .row{display:flex;justify-content:space-between;gap:12px;padding:7px 0;
+       border-bottom:1px solid var(--line);font-size:13px}
+  .row:last-child{border-bottom:0}
+  .row span:first-child{color:var(--dim)}
+  .msg{margin-top:16px;padding:12px 14px;border-radius:10px;font-size:13px;
+       border:1px solid var(--line);background:var(--card)}
+  .msg.err{border-color:#5a2c2c;background:#1d1416;color:#ffb4ad}
+  .msg.warn{border-color:#5a4a24;background:#1e1a12;color:#ffd591}
+  .hidden{display:none}
+  .chips{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
+  .chip{font-size:12px;padding:4px 10px;border-radius:99px;
+        border:1px solid var(--line);color:var(--dim)}
+  .chip.on{color:var(--bad);border-color:#5a2c2c}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>豆包额度</h1>
+  <div class="sub">当前时段是 <b>3 小时滚动窗口</b> —— 已用百分比 + 重置倒计时</div>
+
+  <div class="bar">
+    <button id="refresh">刷新额度</button>
+    <span class="stamp" id="stamp">—</span>
+  </div>
+  <div class="chips" id="chips"></div>
+
+  <div id="msg" class="msg err hidden"></div>
+
+  <div class="grid" id="cards"></div>
+
+  <div class="card wide" id="planCard" style="margin-top:14px">
+    <div class="lbl"><span>套餐</span></div>
+    <div id="planRows"></div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let timers = [];
+
+function fmt(sec){
+  if (sec === null || sec === undefined) return '—';
+  sec = Math.max(0, Math.floor(sec));
+  const d = Math.floor(sec/86400), h = Math.floor(sec%86400/3600),
+        m = Math.floor(sec%3600/60), s = sec%60;
+  if (d > 0) return `${d} 天 ${h} 小时 ${m} 分`;
+  if (h > 0) return `${h} 小时 ${m} 分 ${String(s).padStart(2,'0')} 秒`;
+  if (m > 0) return `${m} 分 ${String(s).padStart(2,'0')} 秒`;
+  return `${s} 秒`;
+}
+function color(p){
+  if (p === null || p === undefined) return 'var(--dim)';
+  if (p >= 90) return 'var(--bad)';
+  if (p >= 70) return 'var(--warn)';
+  return 'var(--ok)';
+}
+function esc(s){
+  return String(s === null || s === undefined ? '' : s)
+    .replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function render(d){
+  timers.forEach(clearInterval); timers = [];
+
+  // 状态标签
+  const chips = [];
+  chips.push(`<span class="chip">账号 ${esc(d.account || 'default')}</span>`);
+  chips.push(`<span class="chip">套餐 ${esc(d.plan || '未知')}</span>`);
+  chips.push(d.exhausted
+    ? '<span class="chip on">额度已耗尽</span>'
+    : '<span class="chip">额度可用</span>');
+  $('chips').innerHTML = chips.join('');
+
+  // 额度卡片
+  $('cards').innerHTML = (d.windows || []).map((w, i) => {
+    const p = w.used_percent;
+    return `<div class="card">
+      <div class="lbl"><span>${esc(w.name)}${w.hours ? '（'+w.hours+' 小时窗口）'.replace('168 小时','7 天') : ''}</span>
+        <span>${w.less_than_one_percent ? '&lt;1%' : ''}</span></div>
+      <div class="pct" style="color:${color(p)}">${p === null || p === undefined ? '—' : p}<small>%</small></div>
+      <div class="track"><div class="fill" style="width:${Math.min(100, p||0)}%;
+           background:${color(p)}"></div></div>
+      <div class="meta">重置倒计时 <b id="cd${i}">—</b></div>
+      <div class="meta" style="margin-top:3px">重置时间 <b>${esc(w.reset_at || '—')}</b></div>
+    </div>`;
+  }).join('');
+
+  // 倒计时：每秒本地递减，不反复请求后端
+  (d.windows || []).forEach((w, i) => {
+    if (w.seconds_left === null || w.seconds_left === undefined) return;
+    let left = w.seconds_left;
+    const el = $('cd' + i);
+    const tick = () => { if (el) el.textContent = fmt(left); left = Math.max(0, left - 1); };
+    tick();
+    timers.push(setInterval(tick, 1000));
+  });
+
+  // 套餐信息
+  const rows = [
+    ['套餐名称', d.plan || '—'],
+    ['到期时间', d.plan_expires_at || '—'],
+    ['是否赠送', d.plan_is_gift === true ? '是（免费赠送）' : (d.plan_is_gift === false ? '否' : '—')],
+    ['抓取时间', d.fetched_at || '—'],
+  ];
+  $('planRows').innerHTML = rows.map(([k, v]) =>
+    `<div class="row"><span>${esc(k)}</span><span>${esc(v)}</span></div>`).join('');
+
+  $('stamp').textContent = '数据时间 ' + (d.fetched_at || '');
+}
+
+function showErr(text, warn){
+  const m = $('msg');
+  m.className = 'msg ' + (warn ? 'warn' : 'err');
+  m.textContent = text;
+  m.classList.remove('hidden');
+}
+function hideErr(){ $('msg').classList.add('hidden'); }
+
+async function load(force){
+  const btn = $('refresh');
+  btn.disabled = true; btn.textContent = '抓取中…（约 7 秒）';
+  hideErr();
+  try {
+    const r = await fetch('/admin/quota' + (force ? '?refresh=1' : ''));
+    const j = await r.json();
+    if (!r.ok || j.error) {
+      showErr('抓取失败：' + (j.error || ('HTTP ' + r.status)));
+      if (j.cached) { render(j.cached); showErr('抓取失败，下面是上次成功的数据。\n' + (j.error||''), true); }
+    } else {
+      render(j);
+    }
+  } catch (e) {
+    showErr('请求后端失败：' + e);
+  } finally {
+    btn.disabled = false; btn.textContent = '刷新额度';
+  }
+}
+
+$('refresh').onclick = () => load(true);
+load(false);
+</script>
+</body>
+</html>
